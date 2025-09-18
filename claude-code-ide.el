@@ -4,7 +4,7 @@
 
 ;; Author: Yoav Orot
 ;; Version: 0.2.6
-;; Package-Requires: ((emacs "28.1") (websocket "1.12") (transient "0.9.0") (web-server "0.1.2"))
+;; Package-Requires: ((emacs "29.1") (websocket "1.12") (transient "0.9.0") (web-server "0.1.2"))
 ;; Keywords: ai, claude, code, assistant, mcp, websocket
 ;; URL: https://github.com/manzaltu/claude-code-ide.el
 
@@ -581,7 +581,9 @@ width has actually changed, working around the scrolling glitch."
 (defun claude-code-ide--default-buffer-name (directory)
   "Generate default buffer name for DIRECTORY."
   (format "*claude-code[%s]*"
-          (file-name-nondirectory (directory-file-name directory))))
+          (if-let ((project (project-current nil directory)))
+              (project-name project)
+            (file-name-nondirectory (directory-file-name directory)))))
 
 (defun claude-code-ide--get-working-directory ()
   "Get the current working directory (project root or current directory)."
