@@ -408,7 +408,6 @@ cursor management, and process buffering for superior user experience."
     (setq-local vterm--redraw-immididately nil))
   ;; Try to prevent cursor flickering by disabling Emacs' own cursor management
   (setq-local cursor-in-non-selected-windows nil)
-  (setq-local blink-cursor-mode nil)
   (setq-local cursor-type nil)  ; Let vterm handle the cursor entirely
   ;; disable hl-line-mode, eliminates another source of flicker
   (setq-local global-hl-line-mode nil)
