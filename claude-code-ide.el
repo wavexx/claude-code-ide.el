@@ -72,6 +72,7 @@
 (defvar vterm-shell)
 (defvar vterm-environment)
 (defvar eat-term-name)
+(defvar vterm-copy-mode)
 (defvar vterm--process)
 
 ;; External function declarations for vterm
