@@ -196,6 +196,14 @@ When nil, the current tab remains active when ediff is opened."
   :type 'boolean
   :group 'claude-code-ide)
 
+(defcustom claude-code-ide-use-separate-frame nil
+  "Whether to display Claude Code in a separate dedicated frame.
+When non-nil, Claude Code opens in a new dedicated frame instead
+of a side window or regular buffer.  This takes precedence over
+`claude-code-ide-use-side-window'."
+  :type 'boolean
+  :group 'claude-code-ide)
+
 (defcustom claude-code-ide-use-side-window t
   "Whether to display Claude Code in a side window.
 When non-nil (default), Claude Code opens in a dedicated side window
@@ -625,26 +633,49 @@ If DIRECTORY is not provided, use the current working directory."
 The window is displayed on the side specified by
 `claude-code-ide-window-side' with dimensions from
 `claude-code-ide-window-width' or `claude-code-ide-window-height'.
-If `claude-code-ide-focus-on-open' is non-nil, the window is selected."
+If `claude-code-ide-focus-on-open' is non-nil, the window is selected.
+If `claude-code-ide-use-separate-frame' is non-nil, the buffer is
+displayed in a separate dedicated frame instead."
   (let ((window
-         (if claude-code-ide-use-side-window
-             ;; Use side window
-             (let* ((side claude-code-ide-window-side)
-                    (slot 0)
-                    (window-parameters '((no-delete-other-windows . t)))
-                    (display-buffer-alist
-                     `((,(regexp-quote (buffer-name buffer))
-                        (display-buffer-in-side-window)
-                        (side . ,side)
-                        (slot . ,slot)
-                        ,@(when (memq side '(left right))
-                            `((window-width . ,claude-code-ide-window-width)))
-                        ,@(when (memq side '(top bottom))
-                            `((window-height . ,claude-code-ide-window-height)))
-                        (window-parameters . ,window-parameters)))))
-               (display-buffer buffer))
-           ;; Use regular buffer
-           (display-buffer buffer))))
+         (cond
+          ;; Use separate dedicated frame
+          (claude-code-ide-use-separate-frame
+           (let* ((existing-window (get-buffer-window buffer t))
+                  (existing-frame (when existing-window
+                                    (window-frame existing-window))))
+             (if (and existing-frame (frame-live-p existing-frame))
+                 ;; Frame already exists, make it visible and raise it
+                 (select-frame-set-input-focus existing-frame)
+               ;; Create a new dedicated frame
+               (let* ((frame-params
+                       `((dedicated . t)
+                         ,@(when (memq claude-code-ide-window-side '(left right))
+                             `((width . ,claude-code-ide-window-width)))
+                         ,@(when (memq claude-code-ide-window-side '(top bottom))
+                             `((height . ,claude-code-ide-window-height)))))
+                      (frame (make-frame frame-params))
+                      (win (frame-selected-window frame)))
+                 (set-window-buffer win buffer)
+                 (set-window-dedicated-p win t)
+                 win))))
+          ;; Use side window
+          (claude-code-ide-use-side-window
+           (let* ((side claude-code-ide-window-side)
+                  (slot 0)
+                  (window-parameters '((no-delete-other-windows . t)))
+                  (display-buffer-alist
+                   `((,(regexp-quote (buffer-name buffer))
+                      (display-buffer-in-side-window)
+                      (side . ,side)
+                      (slot . ,slot)
+                      ,@(when (memq side '(left right))
+                          `((window-width . ,claude-code-ide-window-width)))
+                      ,@(when (memq side '(top bottom))
+                          `((window-height . ,claude-code-ide-window-height)))
+                      (window-parameters . ,window-parameters)))))
+             (display-buffer buffer)))
+          ;; Use regular buffer
+          (t (display-buffer buffer)))))
     ;; Update last accessed buffer whenever we display a Claude buffer
     (setq claude-code-ide--last-accessed-buffer buffer)
     ;; Select the window to give it focus if configured to do so
@@ -653,6 +684,7 @@ If `claude-code-ide-focus-on-open' is non-nil, the window is selected."
     ;; For bottom/top windows, explicitly set and preserve the height
     (when (and window
                claude-code-ide-use-side-window
+               (not claude-code-ide-use-separate-frame)
                (memq claude-code-ide-window-side '(top bottom)))
       (set-window-text-height window claude-code-ide-window-height)
       (set-window-dedicated-p window t))
@@ -724,14 +756,18 @@ If `claude-code-ide-focus-on-open' is non-nil, the window is selected."
 (defun claude-code-ide--toggle-existing-window (existing-buffer working-dir)
   "Toggle visibility of EXISTING-BUFFER window for WORKING-DIR.
 If the window is visible, it will be hidden.
-If the window is not visible, it will be shown in a side window."
-  (let ((window (get-buffer-window existing-buffer)))
+If the window is not visible, it will be shown in a side window.
+When `claude-code-ide-use-separate-frame' is non-nil, the entire
+frame is deleted or created instead."
+  (let ((window (get-buffer-window existing-buffer t)))
     (if window
         ;; Window is visible, hide it
         (progn
           ;; Track this buffer as last accessed when closing
           (setq claude-code-ide--last-accessed-buffer existing-buffer)
-          (delete-window window)
+          (if claude-code-ide-use-separate-frame
+              (delete-frame (window-frame window))
+            (delete-window window))
           (claude-code-ide-debug "Claude Code window hidden"))
       ;; Window is not visible, show it
       (progn
@@ -1077,9 +1113,12 @@ If the buffer is already visible, switch focus to it."
   (interactive)
   (let ((buffer-name (claude-code-ide--get-buffer-name)))
     (if-let ((buffer (get-buffer buffer-name)))
-        (if-let ((window (get-buffer-window buffer)))
+        (if-let ((window (get-buffer-window buffer t)))
             ;; Buffer is visible, just focus it
-            (select-window window)
+            (progn
+              (when claude-code-ide-use-separate-frame
+                (select-frame-set-input-focus (window-frame window)))
+              (select-window window))
           ;; Buffer exists but not visible, display it
           (claude-code-ide--display-buffer-in-side-window buffer))
       (user-error "No Claude Code session for this project.  Use M-x claude-code-ide to start one"))))
@@ -1197,7 +1236,7 @@ If no Claude windows are visible, show the most recently accessed one."
                       (buffer (get-buffer buffer-name)))
                  (when (and buffer
                             (buffer-live-p buffer)
-                            (get-buffer-window buffer))
+                            (get-buffer-window buffer t))
                    ;; Window is visible, use the toggle function to close it
                    (claude-code-ide--toggle-existing-window buffer directory)
                    (setq found-visible t))))
