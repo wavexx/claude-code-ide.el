@@ -129,7 +129,7 @@ Set to nil to disable (default)."
 (defcustom claude-code-ide-mcp-allowed-tools 'auto
   "Configuration for allowed MCP tools when MCP server is enabled.
 Can be one of:
-  'auto - Automatically allow all configured emacs-tools (default)
+  `'auto' - Automatically allow all configured emacs-tools (default)
   nil - Disable the --allowedTools flag
   A string - Custom pattern/tools passed directly to --allowedTools
   A list of strings - List of specific tool names to allow"
@@ -793,7 +793,8 @@ If CONTINUE is non-nil, add the -c flag.
 If RESUME is non-nil, add the -r flag.
 If SESSION-ID is provided, it's included in the MCP server URL path.
 If `claude-code-ide-cli-debug' is non-nil, add the -d flag.
-If `claude-code-ide-system-prompt' is non-nil, add the --append-system-prompt flag.
+If `claude-code-ide-system-prompt' is non-nil, add the --append-system-prompt
+flag.
 Additional flags from `claude-code-ide-cli-extra-flags' are also included."
   (let ((claude-cmd claude-code-ide-cli-path))
     ;; Add debug flag if enabled
@@ -1178,8 +1179,10 @@ If the buffer is already visible, switch focus to it."
 
 ;;;###autoload
 (defun claude-code-ide-insert-newline ()
-  "Send newline (backslash + return) to the Claude Code terminal buffer for the current project.
-This simulates typing backslash followed by Enter, which Claude Code interprets as a newline."
+  "Send newline (backslash + return) to the Claude Code terminal buffer for
+the current project.
+This simulates typing backslash followed by Enter, which Claude Code interprets
+as a newline."
   (interactive)
   (let ((buffer-name (claude-code-ide--get-buffer-name)))
     (if-let* ((buffer (get-buffer buffer-name)))
