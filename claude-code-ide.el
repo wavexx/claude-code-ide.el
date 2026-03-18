@@ -255,6 +255,11 @@ with imperceptible latency."
   :type 'number
   :group 'claude-code-ide)
 
+(define-obsolete-variable-alias
+  'claude-code-ide-eat-initialization-delay
+  'claude-code-ide-terminal-initialization-delay
+  "0.2.6")
+
 (defcustom claude-code-ide-terminal-initialization-delay 0.1
   "Initialization delay for terminal stability.
 Provides a brief stabilization period when launching terminals
@@ -274,11 +279,6 @@ when you switch focus to other windows and return.  This provides
 a more stable viewing experience when working with multiple windows."
   :type 'boolean
   :group 'claude-code-ide)
-
-(define-obsolete-variable-alias
-  'claude-code-ide-eat-initialization-delay
-  'claude-code-ide-terminal-initialization-delay
-  "0.2.6")
 
 ;;; Constants
 
