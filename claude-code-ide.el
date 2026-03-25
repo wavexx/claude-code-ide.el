@@ -213,6 +213,15 @@ of a side window or regular buffer.  This takes precedence over
   :type 'boolean
   :group 'claude-code-ide)
 
+(defcustom claude-code-ide-skip-buffers-in-other-frames t
+  "Whether to hide Claude Code buffers from non-Claude frames.
+When non-nil and `claude-code-ide-use-separate-frame' is also non-nil,
+Claude Code session buffers are excluded from buffer cycling and
+`switch-to-buffer' completions in frames other than the Claude frame.
+This is achieved by setting `buffer-predicate' on non-Claude frames."
+  :type 'boolean
+  :group 'claude-code-ide)
+
 (defcustom claude-code-ide-use-side-window t
   "Whether to display Claude Code in a side window.
 When non-nil (default), Claude Code opens in a dedicated side window
@@ -316,6 +325,9 @@ a more stable viewing experience when working with multiple windows."
   "The most recently accessed Claude Code buffer.")
 
 ;;; Vterm Rendering Optimization
+
+(defvar-local claude-code-ide--session-buffer nil
+  "Non-nil if this buffer is a Claude Code session buffer.")
 
 (defvar-local claude-code-ide--vterm-render-queue nil
   "List of pending terminal output strings awaiting batched rendering.
@@ -557,15 +569,71 @@ This function binds:
     (_ nil)))
 
 (defun claude-code-ide--session-buffer-p (buffer)
-  "Check if BUFFER belongs to a Claude Code session."
-  (when-let* ((buf (if (stringp buffer) (get-buffer buffer) buffer))
-              (proc (get-buffer-process buf)))
-    (catch 'found
-      (maphash (lambda (_dir session-proc)
-                 (when (eq proc session-proc)
-                   (throw 'found t)))
-               claude-code-ide--processes)
-      nil)))
+  "Check if BUFFER belongs to a Claude Code session.
+Checks both the buffer-local `claude-code-ide--session-buffer' flag
+and the process table, so buffers are recognized even after the
+process exits."
+  (when-let* ((buf (if (stringp buffer) (get-buffer buffer) buffer)))
+    (or (buffer-local-value 'claude-code-ide--session-buffer buf)
+        (when-let* ((proc (get-buffer-process buf)))
+          (catch 'found
+            (maphash (lambda (_dir session-proc)
+                       (when (eq proc session-proc)
+                         (throw 'found t)))
+                     claude-code-ide--processes)
+            nil)))))
+
+(defun claude-code-ide--dedicated-frame-p (frame)
+  "Return non-nil if FRAME is a dedicated Claude Code frame."
+  (frame-parameter frame 'claude-code-ide-session))
+
+(defun claude-code-ide--frame-buffer-predicate (buffer)
+  "Buffer predicate that skips Claude session buffers in non-Claude frames.
+Composes with any original predicate stored in the frame parameter
+`claude-code-ide--original-buffer-predicate'."
+  (if (claude-code-ide--session-buffer-p buffer)
+      nil
+    (let ((original (frame-parameter (selected-frame)
+                                     'claude-code-ide--original-buffer-predicate)))
+      (if original
+          (funcall original buffer)
+        t))))
+
+(defun claude-code-ide--setup-frame-buffer-predicate (frame)
+  "Set buffer predicate on FRAME to skip Claude session buffers.
+Preserves any existing predicate by storing it in a frame parameter."
+  (let ((existing (frame-parameter frame 'buffer-predicate)))
+    (unless (eq existing #'claude-code-ide--frame-buffer-predicate)
+      (set-frame-parameter frame 'claude-code-ide--original-buffer-predicate existing)
+      (set-frame-parameter frame 'buffer-predicate
+                           #'claude-code-ide--frame-buffer-predicate))))
+
+(defun claude-code-ide--restore-frame-buffer-predicate (frame)
+  "Restore the original buffer predicate on FRAME."
+  (when (eq (frame-parameter frame 'buffer-predicate)
+            #'claude-code-ide--frame-buffer-predicate)
+    (set-frame-parameter frame 'buffer-predicate
+                         (frame-parameter frame 'claude-code-ide--original-buffer-predicate))
+    (set-frame-parameter frame 'claude-code-ide--original-buffer-predicate nil)))
+
+(defun claude-code-ide--update-all-frame-buffer-predicates ()
+  "Set buffer predicates on all non-Claude frames to skip session buffers."
+  (dolist (frame (frame-list))
+    (unless (claude-code-ide--dedicated-frame-p frame)
+      (claude-code-ide--setup-frame-buffer-predicate frame))))
+
+(defun claude-code-ide--remove-all-frame-buffer-predicates ()
+  "Remove Claude buffer predicates from all frames."
+  (dolist (frame (frame-list))
+    (claude-code-ide--restore-frame-buffer-predicate frame)))
+
+(defun claude-code-ide--new-frame-buffer-predicate-hook (frame)
+  "Set up buffer predicate on newly created FRAME if needed."
+  (when (and claude-code-ide-use-separate-frame
+             claude-code-ide-skip-buffers-in-other-frames
+             (> (hash-table-count claude-code-ide--processes) 0)
+             (not (claude-code-ide--dedicated-frame-p frame)))
+    (claude-code-ide--setup-frame-buffer-predicate frame)))
 
 (defun claude-code-ide--terminal-reflow-filter (original-fn &rest args)
   "Filter terminal reflows to prevent height-only resize triggers.
@@ -627,11 +695,16 @@ If DIRECTORY is not provided, use the current working directory."
 (defun claude-code-ide--set-process (process &optional directory)
   "Set the Claude Code PROCESS for DIRECTORY or current working directory."
   ;; Check if this is the first session starting
-  (when (and claude-code-ide-prevent-reflow-glitch
-             (= (hash-table-count claude-code-ide--processes) 0))
-    ;; Apply advice globally for the first session
-    (advice-add (claude-code-ide--terminal-resize-handler)
-                :around #'claude-code-ide--terminal-reflow-filter))
+  (when (= (hash-table-count claude-code-ide--processes) 0)
+    (when claude-code-ide-prevent-reflow-glitch
+      ;; Apply advice globally for the first session
+      (advice-add (claude-code-ide--terminal-resize-handler)
+                  :around #'claude-code-ide--terminal-reflow-filter))
+    ;; Set up buffer predicates on non-Claude frames
+    (when (and claude-code-ide-use-separate-frame
+               claude-code-ide-skip-buffers-in-other-frames)
+      (add-hook 'after-make-frame-functions
+                #'claude-code-ide--new-frame-buffer-predicate-hook)))
   (puthash (or directory (claude-code-ide--get-working-directory))
            process
            claude-code-ide--processes))
@@ -673,7 +746,7 @@ displayed in a separate dedicated frame instead."
                  (select-frame-set-input-focus existing-frame)
                ;; Create a new dedicated frame
                (let* ((frame-params
-                       `((dedicated . t)
+                       `((claude-code-ide-session . t)
                          ,@(when (memq claude-code-ide-window-side '(left right))
                              `((width . ,claude-code-ide-window-width)))
                          ,@(when (memq claude-code-ide-window-side '(top bottom))
@@ -723,6 +796,10 @@ displayed in a separate dedicated frame instead."
     ;; different dimensions before being displayed in this window
     (when window
       (claude-code-ide--sync-terminal-dimensions buffer window))
+    ;; Hide Claude buffers from other frames when using separate frame
+    (when (and claude-code-ide-use-separate-frame
+               claude-code-ide-skip-buffers-in-other-frames)
+      (claude-code-ide--update-all-frame-buffer-predicates))
     window))
 
 (defvar claude-code-ide--cleanup-in-progress nil
@@ -737,11 +814,16 @@ displayed in a separate dedicated frame instead."
           ;; Remove from process table
           (remhash directory claude-code-ide--processes)
           ;; Check if this was the last session
-          (when (and claude-code-ide-prevent-reflow-glitch
-                     (= (hash-table-count claude-code-ide--processes) 0))
-            ;; Remove advice globally when no sessions remain
-            (advice-remove (claude-code-ide--terminal-resize-handler)
-                           #'claude-code-ide--terminal-reflow-filter))
+          (when (= (hash-table-count claude-code-ide--processes) 0)
+            (when claude-code-ide-prevent-reflow-glitch
+              ;; Remove advice globally when no sessions remain
+              (advice-remove (claude-code-ide--terminal-resize-handler)
+                             #'claude-code-ide--terminal-reflow-filter))
+            ;; Remove buffer predicates from all frames
+            (when claude-code-ide-skip-buffers-in-other-frames
+              (claude-code-ide--remove-all-frame-buffer-predicates)
+              (remove-hook 'after-make-frame-functions
+                           #'claude-code-ide--new-frame-buffer-predicate-hook)))
           ;; Remove vterm rendering optimization if no sessions remain
           (when (and (eq claude-code-ide-terminal-backend 'vterm)
                      claude-code-ide-vterm-anti-flicker
@@ -1049,6 +1131,7 @@ This function handles:
                                           (claude-code-ide--cleanup-on-exit working-dir))))
                 ;; Also add buffer kill hook as a backup
                 (with-current-buffer buffer
+                  (setq claude-code-ide--session-buffer t)
                   (add-hook 'kill-buffer-hook
                             (lambda ()
                               (claude-code-ide--cleanup-on-exit working-dir))
