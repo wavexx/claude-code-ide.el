@@ -861,6 +861,87 @@ have completed before cleanup.  Waits up to 5 seconds."
       ;; Just verify the setting is accepted
       (should (eq claude-code-ide-window-side side)))))
 
+(ert-deftest claude-code-ide-test-frame-buffer-predicate ()
+  "Test that frame buffer predicate skips Claude session buffers."
+  (let ((claude-code-ide--processes (make-hash-table :test 'equal))
+        (test-buf (generate-new-buffer " *test-buf*"))
+        (claude-buf (generate-new-buffer " *test-claude-buf*")))
+    (unwind-protect
+        (let ((mock-proc (start-process "test-proc" claude-buf "sleep" "10")))
+          ;; Register as a Claude session
+          (puthash "/tmp/test-project" mock-proc claude-code-ide--processes)
+          ;; Non-Claude buffer should pass predicate
+          (should (claude-code-ide--frame-buffer-predicate test-buf))
+          ;; Claude session buffer should be rejected
+          (should-not (claude-code-ide--frame-buffer-predicate claude-buf))
+          ;; Kill process before buffer to avoid interactive prompt
+          (delete-process mock-proc))
+      (when (buffer-live-p test-buf) (kill-buffer test-buf))
+      (when (buffer-live-p claude-buf) (kill-buffer claude-buf)))))
+
+(ert-deftest claude-code-ide-test-frame-buffer-predicate-marked ()
+  "Test that frame buffer predicate skips buffers marked as sessions."
+  (let* ((claude-code-ide--processes (make-hash-table :test 'equal))
+         (claude-buf (generate-new-buffer " *test-claude-buf*"))
+         (test-buf (generate-new-buffer " *test-buf*")))
+    (unwind-protect
+        (progn
+          ;; Mark the buffer as a session buffer
+          (with-current-buffer claude-buf
+            (setq claude-code-ide--session-buffer t))
+          ;; Non-Claude buffer should pass predicate
+          (should (claude-code-ide--frame-buffer-predicate test-buf))
+          ;; Marked session buffer should be rejected
+          (should-not (claude-code-ide--frame-buffer-predicate claude-buf)))
+      (when (buffer-live-p test-buf) (kill-buffer test-buf))
+      (when (buffer-live-p claude-buf) (kill-buffer claude-buf)))))
+
+(ert-deftest claude-code-ide-test-frame-buffer-predicate-composes ()
+  "Test that frame buffer predicate composes with existing predicates."
+  (let ((claude-code-ide--processes (make-hash-table :test 'equal))
+        (test-buf (generate-new-buffer " *test-buf*")))
+    (unwind-protect
+        (progn
+          ;; Set an original predicate that rejects our test buffer
+          (set-frame-parameter (selected-frame)
+                               'claude-code-ide--original-buffer-predicate
+                               (lambda (buf) (not (eq buf test-buf))))
+          ;; Non-Claude buffer rejected by original predicate
+          (should-not (claude-code-ide--frame-buffer-predicate test-buf))
+          ;; Clean up
+          (set-frame-parameter (selected-frame)
+                               'claude-code-ide--original-buffer-predicate nil))
+      (kill-buffer test-buf))))
+
+(ert-deftest claude-code-ide-test-setup-restore-frame-predicate ()
+  "Test setting up and restoring buffer predicates on frames."
+  (let ((claude-code-ide--processes (make-hash-table :test 'equal))
+        (original-pred (frame-parameter (selected-frame) 'buffer-predicate)))
+    (unwind-protect
+        (progn
+          ;; Set up predicate
+          (claude-code-ide--setup-frame-buffer-predicate (selected-frame))
+          (should (eq (frame-parameter (selected-frame) 'buffer-predicate)
+                      #'claude-code-ide--frame-buffer-predicate))
+          (should (eq (frame-parameter (selected-frame)
+                                       'claude-code-ide--original-buffer-predicate)
+                      original-pred))
+          ;; Restore predicate
+          (claude-code-ide--restore-frame-buffer-predicate (selected-frame))
+          (should (eq (frame-parameter (selected-frame) 'buffer-predicate)
+                      original-pred))
+          (should-not (frame-parameter (selected-frame)
+                                       'claude-code-ide--original-buffer-predicate)))
+      ;; Ensure cleanup even if test fails
+      (set-frame-parameter (selected-frame) 'buffer-predicate original-pred)
+      (set-frame-parameter (selected-frame)
+                           'claude-code-ide--original-buffer-predicate nil))))
+
+(ert-deftest claude-code-ide-test-dedicated-frame-p ()
+  "Test detection of dedicated Claude Code frames."
+  ;; Regular frame should not be dedicated
+  (should-not (claude-code-ide--dedicated-frame-p (selected-frame))))
+
 (ert-deftest claude-code-ide-test-debug-mode-flag ()
   "Test debug mode CLI flag."
   (let ((claude-code-ide-cli-debug t))
