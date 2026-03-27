@@ -44,6 +44,7 @@
 (declare-function claude-code-ide-mcp--setup-buffer-cache-hooks "claude-code-ide-mcp" ())
 (declare-function claude-code-ide--get-buffer-name "claude-code-ide" (&optional directory))
 (declare-function claude-code-ide--display-buffer-in-side-window "claude-code-ide" (buffer))
+(declare-function claude-code-ide--dedicated-frame-p "claude-code-ide" (frame))
 (defvar ediff-control-buffer)
 (defvar ediff-window-setup-function)
 (defvar ediff-split-window-function)
@@ -411,6 +412,18 @@ ARGUMENTS should contain:
         ;; Clean up existing diff
         (claude-code-ide-mcp--cleanup-diff tab-name session)))
 
+    ;; When running in a dedicated frame, switch to a non-dedicated one.
+    ;; frame-list returns frames in Z-order (most recently selected first),
+    ;; so the first visible non-dedicated match is the best target.
+    (when (claude-code-ide--dedicated-frame-p (selected-frame))
+      (let ((target-frame
+             (cl-find-if (lambda (f)
+                           (and (not (claude-code-ide--dedicated-frame-p f))
+                                (frame-visible-p f)))
+                         (frame-list))))
+        (when target-frame
+          (select-frame-set-input-focus target-frame))))
+
     ;; Switch to original tab if we're on a different one (when configured)
     (when (and claude-code-ide-switch-tab-on-ediff
                (claude-code-ide-mcp-session-original-tab session))
@@ -623,7 +636,7 @@ SESSION is the MCP session to use - if not provided, tries to determine it."
       ;; Fallback to project directory if no current session
       (when-let* ((project-dir (claude-code-ide-mcp--get-buffer-project)))
         (when-let* ((session (claude-code-ide-mcp--get-session-for-project
-                             project-dir)))
+                              project-dir)))
           (let ((session-diffs (claude-code-ide-mcp-session-active-diffs session)))
             (maphash (lambda (tab-name _diff-info)
                        (claude-code-ide-mcp--cleanup-diff tab-name session)
