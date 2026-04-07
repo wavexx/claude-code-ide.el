@@ -567,13 +567,11 @@ This function binds:
    (t
     (error "Unknown terminal backend: %s" claude-code-ide-terminal-backend))))
 
-;;; Terminal Reflow Glitch Prevention
+;;; Terminal Resize Handling
 ;;
-;; This section implements a workaround for Claude Code bug #1422
-;; where terminal reflows during height-only changes can cause
-;; uncontrollable scrolling. This code should be removed once
-;; the upstream bug is fixed.
-;; See: https://github.com/anthropics/claude-code/issues/1422
+;; Suppress terminal resizes during scroll/copy mode to keep the
+;; scroll position stable.  Outside of scroll mode the backend's
+;; resize handler runs normally so the process is always notified.
 
 (defun claude-code-ide--terminal-resize-handler ()
   "Retrieve the terminal's resize handling function based on backend."
@@ -657,34 +655,15 @@ Preserves any existing predicate by storing it in a frame parameter."
     (claude-code-ide--setup-frame-buffer-predicate frame)))
 
 (defun claude-code-ide--terminal-reflow-filter (original-fn &rest args)
-  "Filter terminal reflows to prevent height-only resize triggers.
-This wraps ORIGINAL-FN to suppress reflow signals unless the terminal
-width has actually changed, working around the scrolling glitch."
-  (let* ((base-result (apply original-fn args))
-         (dimensions-stable t))
-    ;; Examine each window showing a Claude session
-    (dolist (win (window-list))
-      (when-let* ((buf (window-buffer win))
-                  ((claude-code-ide--session-buffer-p buf)))
-        (let* ((new-width (window-width win))
-               (cached-width (window-parameter win 'claude-code-ide-cached-width)))
-          ;; Width change detected
-          (unless (eql new-width cached-width)
-            (setq dimensions-stable nil)
-            (set-window-parameter win 'claude-code-ide-cached-width new-width)))))
-    ;; Decide whether to allow reflow
-    (cond
-     ;; Not in a Claude buffer - pass through
-     ((not (claude-code-ide--session-buffer-p (current-buffer)))
-      base-result)
-     ;; In scroll mode - suppress reflow
-     ((claude-code-ide--terminal-scroll-mode-active-p)
-      nil)
-     ;; Dimensions changed - allow reflow
-     ((not dimensions-stable)
-      base-result)
-     ;; No width change - suppress reflow
-     (t nil))))
+  "Filter terminal reflows to prevent disruption during scroll mode.
+In scroll mode, suppress both the terminal emulator resize and the
+process notification to keep the scroll position stable.  Otherwise
+let ORIGINAL-FN run normally so the process is always notified of
+dimension changes."
+  (if (and (claude-code-ide--session-buffer-p (current-buffer))
+           (claude-code-ide--terminal-scroll-mode-active-p))
+      nil
+    (apply original-fn args)))
 
 
 ;;; Helper Functions

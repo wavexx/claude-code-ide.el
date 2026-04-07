@@ -592,6 +592,45 @@ have completed before cleanup.  Waits up to 5 seconds."
       ;; Restore original value
       (setq claude-code-ide-vterm-anti-flicker original-value))))
 
+(ert-deftest claude-code-ide-test-reflow-filter-passthrough ()
+  "Test that the reflow filter passes through resizes outside scroll mode."
+  (let ((orig-called nil)
+        (orig-result '(80 . 24)))
+    (cl-letf (((symbol-function 'claude-code-ide--session-buffer-p)
+               (lambda (_) t))
+              ((symbol-function 'claude-code-ide--terminal-scroll-mode-active-p)
+               (lambda () nil)))
+      (let ((result (claude-code-ide--terminal-reflow-filter
+                     (lambda (&rest _) (setq orig-called t) orig-result))))
+        (should orig-called)
+        (should (equal result orig-result))))))
+
+(ert-deftest claude-code-ide-test-reflow-filter-scroll-mode ()
+  "Test that the reflow filter suppresses resizes during scroll mode."
+  (let ((orig-called nil))
+    (cl-letf (((symbol-function 'claude-code-ide--session-buffer-p)
+               (lambda (_) t))
+              ((symbol-function 'claude-code-ide--terminal-scroll-mode-active-p)
+               (lambda () t)))
+      (let ((result (claude-code-ide--terminal-reflow-filter
+                     (lambda (&rest _) (setq orig-called t) '(80 . 24)))))
+        ;; Original function should NOT be called in scroll mode
+        (should-not orig-called)
+        (should-not result)))))
+
+(ert-deftest claude-code-ide-test-reflow-filter-non-session ()
+  "Test that the reflow filter passes through for non-session buffers."
+  (let ((orig-called nil)
+        (orig-result '(80 . 24)))
+    (cl-letf (((symbol-function 'claude-code-ide--session-buffer-p)
+               (lambda (_) nil))
+              ((symbol-function 'claude-code-ide--terminal-scroll-mode-active-p)
+               (lambda () nil)))
+      (let ((result (claude-code-ide--terminal-reflow-filter
+                     (lambda (&rest _) (setq orig-called t) orig-result))))
+        (should orig-called)
+        (should (equal result orig-result))))))
+
 (ert-deftest claude-code-ide-test-run-with-cli ()
   "Test successful run command execution."
   (skip-unless nil) ; Skip this test for now
