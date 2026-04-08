@@ -455,8 +455,6 @@ that manage cursor appearance."
   "Configure vterm for enhanced performance and visual quality.
 Establishes optimal terminal settings including rendering optimizations,
 cursor management, and process buffering for superior user experience."
-  ;; Disable automatic scrolling to bottom on output to prevent flickering
-  (setq-local vterm-scroll-to-bottom-on-output nil)
   ;; Disable immediate redraw to batch updates and reduce flickering
   (when (boundp 'vterm--redraw-immididately)
     (setq-local vterm--redraw-immididately nil))
